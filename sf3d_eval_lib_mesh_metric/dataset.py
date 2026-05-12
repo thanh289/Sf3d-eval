@@ -80,7 +80,9 @@ class SF3DEvalDataset(Dataset):
         self.output_size = cfg.output_size
         self.depth_render_size = cfg.depth_render_size
 
-        required_paths = [self.data_path, self.depth_path, self.eval_path]
+        required_paths = [self.data_path, self.eval_path]
+        if self.depth_path is not None:
+            required_paths.append(self.depth_path)
         if self.gt_mesh_path is not None:
             required_paths.append(self.gt_mesh_path)
 
@@ -88,13 +90,25 @@ class SF3DEvalDataset(Dataset):
             if not os.path.isdir(required_path):
                 raise FileNotFoundError(f"Directory not found: {required_path}")
 
-        depth_items = [
-            (archive, obj, os.path.join(self.depth_path, archive, obj))
-            for archive in sorted(os.listdir(self.depth_path))
-            if os.path.isdir(os.path.join(self.depth_path, archive))
-            for obj in sorted(os.listdir(os.path.join(self.depth_path, archive)))
-            if os.path.isdir(os.path.join(self.depth_path, archive, obj, "depth"))
-        ]
+        if self.depth_path is not None:
+            # Scan objects từ depth_path (behavior cũ)
+            depth_items = [
+                (archive, obj, os.path.join(self.depth_path, archive, obj))
+                for archive in sorted(os.listdir(self.depth_path))
+                if os.path.isdir(os.path.join(self.depth_path, archive))
+                for obj in sorted(os.listdir(os.path.join(self.depth_path, archive)))
+                if os.path.isdir(os.path.join(self.depth_path, archive, obj, "depth"))
+            ]
+        else:
+            # Không có depth_path → scan objects từ data_path
+            print("[dataset] depth_path not provided — scanning objects from data_path, depth metrics disabled.")
+            depth_items = [
+                (archive, obj, os.path.join(self.data_path, archive, obj))
+                for archive in sorted(os.listdir(self.data_path))
+                if os.path.isdir(os.path.join(self.data_path, archive))
+                for obj in sorted(os.listdir(os.path.join(self.data_path, archive)))
+                if os.path.isdir(os.path.join(self.data_path, archive, obj))
+            ]
 
         n = len(depth_items)
         end = max(0, int(cfg.val_size * n))
@@ -190,8 +204,6 @@ class SF3DEvalDataset(Dataset):
         item_path = os.path.join(self.data_path, archive_name, item_name)
         eval_item_path = self._find_eval_item_path(item_name)
 
-        depth_dir = os.path.join(eval_item_path, "depth")
-
         input_view_id = INPUT_VIEW_IDS[self.cfg.sf3d_input_view_index]
         input_view_name = f"{input_view_id:03d}"
         input_rgb_path = os.path.join(item_path, "rgb", f"{input_view_name}.png")
@@ -212,23 +224,19 @@ class SF3DEvalDataset(Dataset):
             target_rgbs.append(rgb)
             target_masks.append(mask)
 
-        # Depth evaluation follows the same 16 eval views as RGB evaluation.
+        # Depth evaluation: chỉ chạy nếu depth_path được cung cấp
         depth_masks, gt_depths = [], []
-        for view_idx, (elev, azim) in enumerate(EVAL_CAMERA_PARAMS):
-            view_name = f"{view_idx:03d}"
-
-            # Use eval RGB/mask so GT depth mask and rendered pred depth are aligned
-            # with the same eval camera/view indexing.
-            rgba = load_rgba_cv2(os.path.join(eval_item_path, "rgb", f"{view_name}.png"))
-            _, mask = rgba_to_rgb_mask(rgba, white_bg=True)
-            mask = resize_chw(mask.transpose(2, 0, 1), self.depth_render_size, mode="nearest").transpose(1, 2, 0)
-
-            # Expected depth names now match eval view names: 000.npy/.npz ... 015.npy/.npz.
-            depth = load_depth_file(depth_dir, view_name)
-            depth = depth_to_hw_resized(depth, self.depth_render_size)
-
-            depth_masks.append(mask)
-            gt_depths.append(depth[..., None])
+        if self.depth_path is not None:
+            depth_dir = os.path.join(eval_item_path, "depth")
+            for view_idx, (elev, azim) in enumerate(EVAL_CAMERA_PARAMS):
+                view_name = f"{view_idx:03d}"
+                rgba = load_rgba_cv2(os.path.join(eval_item_path, "rgb", f"{view_name}.png"))
+                _, mask = rgba_to_rgb_mask(rgba, white_bg=True)
+                mask = resize_chw(mask.transpose(2, 0, 1), self.depth_render_size, mode="nearest").transpose(1, 2, 0)
+                depth = load_depth_file(depth_dir, view_name)
+                depth = depth_to_hw_resized(depth, self.depth_render_size)
+                depth_masks.append(mask)
+                gt_depths.append(depth[..., None])
 
         return {
             "archive_name": archive_name,
@@ -242,7 +250,7 @@ class SF3DEvalDataset(Dataset):
             "target_rgbs": torch.from_numpy(np.stack(target_rgbs).astype(np.float32)),
             "target_masks": torch.from_numpy(np.stack(target_masks).astype(np.float32)),
             "target_camera_params": torch.tensor(EVAL_CAMERA_PARAMS, dtype=torch.float32),
-            "depth_masks": torch.from_numpy(np.stack(depth_masks).astype(np.float32)),
-            "gt_depths": torch.from_numpy(np.stack(gt_depths).astype(np.float32)),
+            "depth_masks": torch.from_numpy(np.stack(depth_masks).astype(np.float32)) if depth_masks else torch.zeros(0),
+            "gt_depths": torch.from_numpy(np.stack(gt_depths).astype(np.float32)) if gt_depths else torch.zeros(0),
             "depth_camera_params": torch.tensor(EVAL_CAMERA_PARAMS, dtype=torch.float32),
         }

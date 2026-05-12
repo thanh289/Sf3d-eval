@@ -11,7 +11,7 @@ from transformers.convert_graph_to_onnx import parser
 @dataclass
 class EvalConfig:
     data_path: str
-    depth_path: str
+    depth_path: Optional[str]
     eval_path: str
     outdir: str = "/workspace/outputs/sf3d_eval"
     csv_name: str = "sf3d_eval_results.csv"
@@ -68,7 +68,7 @@ def parse_args() -> EvalConfig:
     parser = argparse.ArgumentParser(description="Run SF3D mesh reconstruction + RGB/depth/mesh evaluation.")
 
     parser.add_argument("--data-path", required=True)
-    parser.add_argument("--depth-path", required=True)
+    parser.add_argument("--depth-path", default=None, help="Depth folder. Nếu không cung cấp, depth metrics sẽ bị bỏ qua.")
     parser.add_argument("--eval-path", required=True)
     parser.add_argument("--outdir", default="/workspace/outputs/sf3d_eval")
     parser.add_argument("--csv-name", default="sf3d_eval_results.csv")

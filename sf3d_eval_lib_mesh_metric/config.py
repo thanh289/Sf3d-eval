@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
+from transformers.convert_graph_to_onnx import parser
 
 
 @dataclass
@@ -58,6 +59,9 @@ class EvalConfig:
     preview_only: bool = False
 
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
+
+    object_list: Optional[str] = None
+    allow_missing_object_list: bool = False
 
 
 def parse_args() -> EvalConfig:
@@ -115,6 +119,9 @@ def parse_args() -> EvalConfig:
     parser.add_argument("--no-save-mesh", dest="save_mesh", action="store_false")
     parser.add_argument("--preview-only", action="store_true", help="Run only the first selected object and save previews.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+
+    parser.add_argument("--object-list", default=None, help="CSV/text file chứa object IDs cần eval. Chỉ chạy những object này.")
+    parser.add_argument("--allow-missing-object-list", action="store_true", help="Nếu set, bỏ qua object trong list mà không có data. Mặc định: báo lỗi.")
 
     args = parser.parse_args()
     cfg = EvalConfig(**vars(args))

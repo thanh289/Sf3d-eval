@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import os
 
 import numpy as np
@@ -10,6 +11,63 @@ from .cameras import EVAL_CAMERA_PARAMS, INPUT_VIEW_IDS
 from .config import EvalConfig
 from .image_io import depth_to_hw_resized, load_depth_file, load_rgba_cv2, resize_chw, rgba_to_rgb_mask
 from .sf3d_input import make_sf3d_input_image
+
+
+def load_object_list(path: str | None) -> set[str] | None:
+    """Read a CSV or plain-text file of object IDs.
+
+    CSV: supports columns object_id, archive_name/item_name, ply_path, glb_path.
+         object_id is inferred from whichever columns are present.
+    Plain text: one object_id per line.
+
+    Each ID is stored in two forms so matching is flexible:
+        "archive/item"  and  "item"
+    """
+    if path is None or str(path).strip().lower() in {"", "none", "null"}:
+        return None
+
+    allowed: set[str] = set()
+    with open(path, "r", encoding="utf-8") as f:
+        sample = f.read(4096)
+        f.seek(0)
+
+        if "," in sample or "object_id" in sample:
+            reader = csv.DictReader(f)
+            for row in reader:
+                oid      = str(row.get("object_id",    "")).strip()
+                archive  = str(row.get("archive_name", "")).strip()
+                item     = str(row.get("item_name",    "")).strip()
+                ply_path = str(row.get("ply_path",     "")).strip()
+                glb_path = str(row.get("glb_path",     "")).strip()
+
+                if not oid and archive and item:
+                    oid = f"{archive}/{item}"
+                if not oid and ply_path:
+                    stem   = os.path.splitext(os.path.basename(ply_path))[0]
+                    parent = os.path.basename(os.path.dirname(ply_path))
+                    oid    = f"{parent}/{stem}" if parent else stem
+                if not oid and glb_path:
+                    stem   = os.path.splitext(os.path.basename(glb_path))[0]
+                    parent = os.path.basename(os.path.dirname(glb_path))
+                    oid    = f"{parent}/{stem}" if parent else stem
+
+                if oid:
+                    allowed.add(oid)
+                    allowed.add(oid.split("/")[-1])
+        else:
+            for line in f:
+                oid = line.strip()
+                if oid:
+                    allowed.add(oid)
+                    allowed.add(oid.split("/")[-1])
+
+    return allowed
+
+
+def is_allowed_object(object_id: str, allowed: set[str] | None) -> bool:
+    if allowed is None:
+        return True
+    return object_id in allowed or object_id.split("/")[-1] in allowed
 
 
 class SF3DEvalDataset(Dataset):
@@ -47,6 +105,15 @@ class SF3DEvalDataset(Dataset):
 
         if cfg.max_objects is not None:
             depth_items = depth_items[: cfg.max_objects]
+
+        allowed = load_object_list(getattr(cfg, "object_list", None))
+        if allowed is not None:
+            before = len(depth_items)
+            depth_items = [
+                (arch, obj, path) for arch, obj, path in depth_items
+                if is_allowed_object(f"{arch}/{obj}", allowed)
+            ]
+            print(f"[dataset] object-list filter: {before} -> {len(depth_items)}")
 
         self.items = depth_items
         self.eval_index = self._build_eval_index()

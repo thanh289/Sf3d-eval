@@ -63,11 +63,11 @@ def run_one_object(sample: dict, model: SF3D, cfg: EvalConfig, idx: int, lpips_m
             remesh=cfg.remesh_option,
             vertex_count=cfg.target_vertex_count,
         )
-
-    # Unload SF3D xuống CPU trước khi render để giải phóng VRAM
+    
+    # Giải phóng VRAM sau khi SF3D sinh mesh xong, trước khi render
     if cfg.device == "cuda":
-        model.to("cpu")
         torch.cuda.empty_cache()
+ 
 
     pred_rgb, _, _ = render_mesh_pytorch3d(
         mesh,
@@ -82,19 +82,24 @@ def run_one_object(sample: dict, model: SF3D, cfg: EvalConfig, idx: int, lpips_m
     gt_rgb = sample["target_rgbs"].permute(0, 3, 1, 2).to(cfg.device)
     rgb_m = compute_rgb_metrics(pred_rgb, gt_rgb, lpips_metric, ssim_metric, cfg.device)
 
-    _, pred_depth, pred_alpha_d = render_mesh_pytorch3d(
-        mesh,
-        sample["depth_camera_params"],
-        height=cfg.depth_render_size,
-        width=cfg.depth_render_size,
-        fovy_deg=cfg.fovy,
-        dist=cfg.cam_radius,
-        device=cfg.device,
-        cfg=cfg,
-    )
-    gt_depth = sample["gt_depths"].permute(0, 3, 1, 2).to(cfg.device)
-    gt_mask = sample["depth_masks"].permute(0, 3, 1, 2).to(cfg.device)
-    depth_m = compute_depth_metrics(pred_depth, gt_depth, pred_alpha_d, gt_mask, cfg.device)
+    # Depth metrics: chỉ chạy nếu depth_path được cung cấp
+    if cfg.depth_path is not None:
+        _, pred_depth, pred_alpha_d = render_mesh_pytorch3d(
+            mesh,
+            sample["depth_camera_params"],
+            height=cfg.depth_render_size,
+            width=cfg.depth_render_size,
+            fovy_deg=cfg.fovy,
+            dist=cfg.cam_radius,
+            device=cfg.device,
+            cfg=cfg,
+        )
+        gt_depth = sample["gt_depths"].permute(0, 3, 1, 2).to(cfg.device)
+        gt_mask = sample["depth_masks"].permute(0, 3, 1, 2).to(cfg.device)
+        depth_m = compute_depth_metrics(pred_depth, gt_depth, pred_alpha_d, gt_mask, cfg.device)
+    else:
+        pred_depth, pred_alpha_d = None, None
+        depth_m = {"abs_diff": torch.tensor(float("nan")), "delta_1": torch.tensor(float("nan"))}
 
     mesh_m: dict[str, float] = {}
     if cfg.gt_mesh_path is not None:
@@ -144,14 +149,15 @@ def run_one_object(sample: dict, model: SF3D, cfg: EvalConfig, idx: int, lpips_m
             pred_rgb,
             max_views=min(16, len(gt_rgb)),
         )
-        save_depth_preview(
-            os.path.join(obj_out, "preview_depth.png"),
-            preview_input,
-            gt_depth,
-            pred_depth,
-            pred_alpha_d,
-            max_views=min(16, len(gt_depth)),
-        )
+        if pred_depth is not None:
+            save_depth_preview(
+                os.path.join(obj_out, "preview_depth.png"),
+                preview_input,
+                gt_depth,
+                pred_depth,
+                pred_alpha_d,
+                max_views=min(16, len(gt_depth)),
+            )
 
         # Optional: also save the first rendered prediction and GT separately for quick checking.
         imageio.imwrite(
@@ -261,16 +267,12 @@ def run_eval(cfg: EvalConfig) -> None:
             row["error"] = repr(exc)
             print("[ERROR]", object_id, row["error"])
 
-        finally:
-            # Đảm bảo model luôn được load lại GPU cho object tiếp theo,
-            # kể cả khi run_one_object throw exception
-            if cfg.device == "cuda":
-                model.to(cfg.device)
-                torch.cuda.empty_cache()
-
         rows.append(row)
         done_ids.add(object_id)
         pd.DataFrame(rows).to_csv(csv_out, index=False)
+
+        if cfg.device == "cuda":
+            torch.cuda.empty_cache()
 
     print("Saved CSV:", csv_out)
     write_summary(rows, cfg)

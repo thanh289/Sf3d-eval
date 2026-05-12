@@ -32,13 +32,8 @@ def render_mesh_pytorch3d(mesh: trimesh.Trimesh, camera_params, height: int, wid
         depth = fragments.zbuf[..., :1]
         depth = torch.where(alpha > 0.5, depth, torch.zeros_like(depth))
 
-        # Chuyển sang CPU ngay sau mỗi view để giải phóng VRAM
-        rgbs.append(rgb[0].permute(2, 0, 1).contiguous().cpu())
-        depths.append(depth[0].permute(2, 0, 1).contiguous().cpu())
-        alphas.append(alpha[0].permute(2, 0, 1).contiguous().cpu())
-
-        # Giải phóng fragment buffer (chiếm nhiều VRAM nhất)
-        del fragments, image, alpha, rgb, depth
-        torch.cuda.empty_cache()
+        rgbs.append(rgb[0].permute(2, 0, 1).contiguous())
+        depths.append(depth[0].permute(2, 0, 1).contiguous())
+        alphas.append(alpha[0].permute(2, 0, 1).contiguous())
 
     return torch.stack(rgbs), torch.stack(depths), torch.stack(alphas)

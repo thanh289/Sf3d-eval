@@ -63,6 +63,11 @@ def run_one_object(sample: dict, model: SF3D, cfg: EvalConfig, idx: int, lpips_m
             remesh=cfg.remesh_option,
             vertex_count=cfg.target_vertex_count,
         )
+    
+    # Giải phóng VRAM sau khi SF3D sinh mesh xong, trước khi render
+    if cfg.device == "cuda":
+        torch.cuda.empty_cache()
+ 
 
     pred_rgb, _, _ = render_mesh_pytorch3d(
         mesh,

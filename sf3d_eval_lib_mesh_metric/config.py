@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
-from transformers.convert_graph_to_onnx import parser
+# from transformers.convert_graph_to_onnx import parser
 
 
 @dataclass

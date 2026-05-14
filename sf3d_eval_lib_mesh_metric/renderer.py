@@ -15,7 +15,7 @@ def render_mesh_pytorch3d(mesh: trimesh.Trimesh, camera_params, height: int, wid
 
     raster_settings = RasterizationSettings(image_size=(height, width), blur_radius=0.0, faces_per_pixel=1, bin_size=0)
     rasterizer = MeshRasterizer(raster_settings=raster_settings)
-    lights = AmbientLights(device=device, location=[[2.0, 2.0, 2.0]])
+    lights = AmbientLights(device=device)
     blend_params = BlendParams(background_color=(1.0, 1.0, 1.0))
     shader = HardFlatShader (device=device, lights=lights, blend_params=blend_params)
 
